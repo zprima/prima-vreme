@@ -1,5 +1,7 @@
 # Prima Vreme
 
+<img src="pic1.png" height="400px" />
+
 ## Vir
 
 ARSO - Agencija Republike Slovenije za Okolje

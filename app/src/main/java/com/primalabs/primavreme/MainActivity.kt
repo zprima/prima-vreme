@@ -5,10 +5,7 @@ import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.*
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
@@ -19,22 +16,18 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.BaselineShift
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.*
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.ImageLoader
@@ -54,6 +47,10 @@ import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Headers
 import retrofit2.http.Query
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.*
 
 const val LOG_TAG = "vremetag"
 const val ARSO_WEATHER_IMAGE_URL = "https://vreme.arso.gov.si/app/common/images/svg/weather/"
@@ -117,7 +114,14 @@ data class ArsoLocationFeaturePropertyDay(
 data class ArsoLocationFeaturePropertyDayTimeline(
     @Json(name = "t") val t: String?,
     @Json(name = "tnsyn") val tMin: String?,
-    @Json(name = "txsyn") val tMax: String?
+    @Json(name = "txsyn") val tMax: String?,
+    @Json(name = "clouds_icon_wwsyn_icon") val iconName: String,
+    @Json(name = "clouds_shortText") val description: String,
+    @Json(name = "ff_shortText") val windDescription: String,
+    @Json(name = "ff_val") val windSpeed: String,
+    @Json(name = "rh_shortText") val humidityDescription: String,
+    @Json(name = "rh") val humidityPercent: String,
+    @Json(name = "valid") val validForDateTime: String
 )
 
 data class ArsoLocationResult(
@@ -129,21 +133,6 @@ data class ArsoLocationResult(
 data class ArsoForecast(
     @Json(name="features") val features: List<ArsoLocationFeature>
 )
-
-@ExperimentalAnimationApi
-class MainActivity : AppCompatActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            PrimaVremeTheme(false) {
-                // A surface container using the 'background' color from the theme
-                Surface(color = MaterialTheme.colors.background) {
-                    App()
-                }
-            }
-        }
-    }
-}
 
 const val STATE_LOCATION_SELECTED_NAME = "location.state.selected.name"
 
@@ -171,7 +160,7 @@ class WeatherViewModel(private val savedStateHandle: SavedStateHandle): ViewMode
             viewModelScope.launch() {
                 val result = repository.callTriggerSearch(searchInput)
                 arsoLocations.value = result.body()?.features
-           }
+            }
         } else {
             arsoLocations.value = listOf()
         }
@@ -199,7 +188,23 @@ class WeatherViewModel(private val savedStateHandle: SavedStateHandle): ViewMode
             triggerLocationWeatherFetch(it)
         }
 
-//        triggerLocationWeatherFetch("Celje")
+        triggerLocationWeatherFetch("Celje")
+    }
+}
+
+
+@ExperimentalAnimationApi
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            PrimaVremeTheme(false) {
+                // A surface container using the 'background' color from the theme
+                Surface(color = MaterialTheme.colors.background) {
+                    App()
+                }
+            }
+        }
     }
 }
 
@@ -254,45 +259,80 @@ fun App(){
 
 @Composable
 private fun WeatherAppContent(vm: WeatherViewModel) {
-    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+    val locationForecastData = vm.selectedLocationWeather.observeAsState(null)
 
-    Column(
-        Modifier
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState())) {
-//        SearchPart(vm)
-//        Spacer(Modifier.height(16.dp))
-//        DetailsPart(vm)
+    if(locationForecastData.value == null){
+        Text("Loading...")
+    } else {
+        val forecastValue = locationForecastData.value!!
 
         Column(
+            Modifier
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Column {
+                CurrentForecast(forecastData = forecastValue.observation)
 
-        ){
-            Text("CELJE", style = MaterialTheme.typography.h2, color = MaterialTheme.colors.onPrimary, modifier = Modifier.paddingFromBaseline(bottom = 16.dp))
-            Text("Nedelja, 11. April 2021", style = MaterialTheme.typography.subtitle2, color = MaterialTheme.colors.onSecondary)
+                Spacer(Modifier.height(16.dp))
 
-            Spacer(Modifier.height(16.dp))
+                Forecast1h(forecast1hData = forecastValue.forecast1h)
 
-            CurrentForecastMain(imgUrl)
-            CurrentForecastDetails()
+                Spacer(Modifier.height(24.dp))
 
-            Spacer(Modifier.height(16.dp))
-
-            Forecast1h()
-
-            Spacer(Modifier.height(24.dp))
-
-            Forecast24h()
+                Forecast24h(forecast24hData = forecastValue.forecast24h)
+            }
         }
     }
 }
 
 @Composable
-private fun CurrentForecastMain(imgUrl: String) {
-    Row(
+private fun CurrentForecast(forecastData: ArsoForecast){
+    val properties = forecastData.features.first().properties
+    val todaysForecast = properties.days.first()
+    val todaysForecastDate = LocalDate.parse(todaysForecast.date, DateTimeFormatter.ISO_DATE)
+    val todaysTimeline = todaysForecast.timeline.first()
+    val forecastImgUrl = "${ARSO_WEATHER_IMAGE_URL}${todaysTimeline.iconName}.svg"
 
-    ) {
+    CurrentForecastMain(
+        locationName = properties.title,
+        forecastDate = todaysForecastDate,
+        forecastImgUrl = forecastImgUrl,
+        temparature = todaysTimeline.t ?: "",
+        description = todaysTimeline.description
+    )
+
+    CurrentForecastDetails(
+        windText = todaysTimeline.windDescription,
+        windValue = "${todaysTimeline.windSpeed} km/h",
+        humidityText = todaysTimeline.humidityDescription,
+        humidityValue = "${todaysTimeline.humidityPercent} %"
+    )
+}
+
+@Composable
+private fun CurrentForecastMain(locationName: String, forecastDate: LocalDate, forecastImgUrl: String, temparature: String, description: String) {
+    val formatter = DateTimeFormatter.ofPattern("eeee, d. L y")
+    val formattedForecastDate = forecastDate.format(formatter)
+
+    Text(
+        text = locationName.toUpperCase(Locale.ROOT),
+        style = MaterialTheme.typography.h2,
+        color = MaterialTheme.colors.onPrimary,
+        modifier = Modifier.paddingFromBaseline(bottom = 16.dp)
+    )
+
+    Text(
+        text = formattedForecastDate.capitalize(),
+        style = MaterialTheme.typography.subtitle2,
+        color = MaterialTheme.colors.onSecondary
+    )
+
+    Spacer(Modifier.height(16.dp))
+
+    Row{
         CoilImage(
-            data = imgUrl,
+            data = forecastImgUrl,
             contentDescription = null,
             error = {
                 Text(it.throwable.message!!)
@@ -302,15 +342,12 @@ private fun CurrentForecastMain(imgUrl: String) {
                 .fillMaxWidth(.5f),
             contentScale = ContentScale.Crop,
             shouldRefetchOnSizeChange = { _, _ -> false }
-
         )
 
-        Column(
-            modifier = Modifier,
-        ) {
+        Column {
             Text(
                 buildAnnotatedString {
-                    append("21")
+                    append(temparature)
                     withStyle(
                         SpanStyle(
                             baselineShift = BaselineShift.Superscript,
@@ -325,7 +362,7 @@ private fun CurrentForecastMain(imgUrl: String) {
             )
 
             Text(
-                "Pretežno Oblačno",
+                text = description,
                 color = MaterialTheme.colors.onPrimary
             )
         }
@@ -333,27 +370,34 @@ private fun CurrentForecastMain(imgUrl: String) {
 }
 
 @Composable
-fun CurrentForecastDetails(){
+fun CurrentForecastDetails(windText: String, windValue: String, humidityText: String, humidityValue: String){
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ){
-        CurrentForecastDetailItem("šibek Z", "9 km/h", Icons.Default.Air, Color(0xFFe4f4e5), Color(0xFF98d2a5))
-        CurrentForecastDetailItem("nizka", "44 %",Icons.Default.Bloodtype, Color(0xFFe0eff6), Color(0xFF7dc1e5))
+        CurrentForecastDetailItem(
+            detailText = windText,
+            detailValue = windValue,
+            icon = Icons.Default.Air,
+            iconBackgroundColor = Color(0xFFe4f4e5),
+            iconColor = Color(0xFF98d2a5))
+
+        CurrentForecastDetailItem(
+            detailText = humidityText,
+            detailValue = humidityValue,Icons.Default.Bloodtype,
+            iconBackgroundColor = Color(0xFFe0eff6),
+            iconColor = Color(0xFF7dc1e5)
+        )
     }
 }
 
 @Composable
-private fun CurrentForecastDetailItem(detailText: String, detailValue: String, icon: ImageVector, mainColor: Color, iconColor: Color) {
-    Row(modifier = Modifier.padding(8.dp),
-
-    ) {
-        Box(
-            modifier =
-            Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .size(40.dp)
-                .background(color = mainColor),
+private fun CurrentForecastDetailItem(detailText: String, detailValue: String, icon: ImageVector, iconBackgroundColor: Color, iconColor: Color) {
+    Row(modifier = Modifier.padding(8.dp)){
+        Box(modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .size(40.dp)
+            .background(color = iconBackgroundColor),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = iconColor)
@@ -369,36 +413,46 @@ private fun CurrentForecastDetailItem(detailText: String, detailValue: String, i
 }
 
 @Composable
-fun Forecast1h(){
-    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+private fun Forecast1h(forecast1hData: ArsoForecast){
+    val features = forecast1hData.features
+    val properties = features.first().properties
+    val todaysForecast = properties.days.first()
 
     Text("Danes", modifier = Modifier.padding(bottom = 8.dp))
 
     Row(modifier =
         Modifier.horizontalScroll(rememberScrollState())
     ){
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl, true)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
+        todaysForecast.timeline.forEach {
+            Forecast1hCard(it)
+        }
+
     }
 }
 
 @Composable
-fun Forecast1hCard(imgUrl: String, active: Boolean = false){
+private fun Forecast1hCard(forecastData: ArsoLocationFeaturePropertyDayTimeline) {
+    val forecastDate = LocalDateTime.parse(forecastData.validForDateTime, DateTimeFormatter.ISO_DATE_TIME)
+    val forecastImgUrl = "${ARSO_WEATHER_IMAGE_URL}${forecastData.iconName}.svg"
+
+    Forecast1hCardItem(
+        forecastDate = forecastDate,
+        forecastImgUrl = forecastImgUrl,
+        temparature = forecastData.t ?: "",
+        windSpeed = "${forecastData.windSpeed} km/h",
+        humidityPercent = "${forecastData.humidityPercent} %",
+        active = forecastDate.hour == LocalDateTime.now().hour
+    )
+}
+
+@Composable
+private fun Forecast1hCardItem(forecastDate: LocalDateTime, forecastImgUrl: String, temparature: String, windSpeed: String, humidityPercent: String, active: Boolean = false){
     val roundShape = RoundedCornerShape(10)
+    val hourFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
     var modifier = Modifier
         .clip(roundShape)
-        .border(BorderStroke(1.dp, Color(0xFFe8e9ec)), roundShape )
+        .border(BorderStroke(1.dp, Color(0xFFe8e9ec)), roundShape)
 
     if(active){
         modifier = modifier.background(
@@ -417,14 +471,15 @@ fun Forecast1hCard(imgUrl: String, active: Boolean = false){
         modifier = modifier.padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("11:00",
+        Text(
+            text = forecastDate.format(hourFormatter),
             color = textColor,
             fontSize = 14.sp,
             fontWeight = FontWeight.Normal
         )
 
         CoilImage(
-            data = imgUrl,
+            data = forecastImgUrl,
             contentDescription = null,
             error = {
                 Text(it.throwable.message!!)
@@ -433,329 +488,344 @@ fun Forecast1hCard(imgUrl: String, active: Boolean = false){
         )
 
         Text(buildAnnotatedString {
-            append("20")
+            append(temparature)
             withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 10.sp, fontWeight = FontWeight.Normal)){
                 append("c")
             }
         }, fontWeight = FontWeight.Bold, color = textColor)
 
-        Text("9 km/h", fontSize = 12.sp, color = textColor)
-        Text("44 %", fontSize = 12.sp, color = textColor)
+        Text(windSpeed, fontSize = 12.sp, color = textColor)
+        Text(humidityPercent, fontSize = 12.sp, color = textColor)
     }
-
     Spacer(modifier = Modifier.width(16.dp))
 }
 
 @Composable
-fun Forecast24h(){
-    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+private fun Forecast24h(forecast24hData: ArsoForecast){
+    val features = forecast24hData.features
+    val properties = features.first().properties
 
     Text("Naslednjih 10 dni", modifier = Modifier.padding(bottom = 8.dp))
 
     Column(){
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-        Forecast24Card()
-    }
-}
-
-@Composable
-fun SearchPart(vm: WeatherViewModel) {
-    val scope = rememberCoroutineScope()
-    var searchInput by remember { mutableStateOf("") }
-    val locations by vm.arsoLocations.observeAsState()
-
-    fun triggerSearch() {
-        scope.launch() {
-            vm.triggerSearch(searchInput)
-        }
-    }
-
-    fun triggerLocationSearch(locationName: String){
-        scope.launch {
-            vm.onSearchLocationClicked(locationName)
-        }
-    }
-
-    Row(Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = searchInput,
-            onValueChange = { searchInput = it; triggerSearch(); },
-            modifier = Modifier.fillMaxWidth(),
-            leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null) },
-            singleLine = true
-        )
-
-        DropdownMenu(
-            expanded = locations?.size ?: 0 > 0,
-            onDismissRequest = { },
-            properties = PopupProperties(focusable = false),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-        ) {
-            locations?.forEach {
-                val locationTemp: String = it.properties.days.first().timeline.first().t!!
-                val locationName: String = it.properties.title
-
-                DropdownMenuItem(onClick = { triggerLocationSearch(locationName) }) {
-                    Row() {
-                        Text(locationTemp, modifier = Modifier.width(20.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Text(locationName)
-                    }
-                }
-            }
+        properties.days.drop(1).forEach {
+            Forecast24Card(it)
         }
     }
 }
 
 @Composable
-fun DetailsPart(vm: WeatherViewModel){
-    val locationForecast by vm.selectedLocationWeather.observeAsState()
+private fun Forecast24Card(forecastDayData: ArsoLocationFeaturePropertyDay) {
+    val dayNameFormatter = DateTimeFormatter.ofPattern("eeee")
+    val dateFormatter = DateTimeFormatter.ofPattern("d.MM.yyyy")
 
-    if(locationForecast != null){
-        LocationWeatherDetailsPart(locationForecast!!)
-    }
+    val date = LocalDate.parse(forecastDayData.date)
+    val timeline = forecastDayData.timeline.first()
 
-    LocationWeatherDetailsPart(null)
+    val maxTemparature = timeline.tMax ?: ""
+    val minTemparature = timeline.tMin ?: ""
+    val description = timeline.description
 
-}
-
-@Composable
-fun LocationWeatherDetailsPart(locationForecast: ArsoLocationResult?){
-//    val locationName: String = locationForecast.observation.features.first().properties.title
-//    val currentTemp: String = locationForecast.observation.features.first().properties.days.first().timeline.first().t!!
-
-    val locationName = "CELJE"
-    val currentTemp = "12"
-    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
-
-    Column(modifier = Modifier){
-        Text(locationName, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF384555))
-        Text("Sobota, 10. April, 2021", style = MaterialTheme.typography.subtitle1)
-
-        Spacer(Modifier.height(32.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-        ){
-
-            CoilImage(
-                data = imgUrl,
-                contentDescription = null,
-                error = {
-                    Text(it.throwable.message!!)
-                },
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(.5f)
-                    .offset(x = 10.dp),
-                alignment = Alignment.CenterEnd
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.Top
-            ){
-                Spacer(Modifier.height(16.dp))
-
-                Text(text = buildAnnotatedString {
-                     append(currentTemp)
-
-                    withStyle(style = SpanStyle(
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Light,
-                        baselineShift = BaselineShift.Superscript,
-                        color = Color(0xFFadb4bc)
-                    )){
-                        append("C")
-                    }
-                }, style = MaterialTheme.typography.h1)
-                Text("Delno Oblačno")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            modifier = Modifier.fillMaxWidth()
-        ){
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(100.dp)
-            ){
-                Box(modifier = Modifier
-                    .size(50.dp)
-                    .background(color = Color(0xFFe4f4e7)),
-                    contentAlignment = Alignment.Center
-                ){
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF48725f))
-                }
-                Text("9km/h")
-            }
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(100.dp)
-            ){
-                Box(modifier = Modifier
-                    .size(50.dp)
-                    .background(color = Color(0xFFe1f0f7)),contentAlignment = Alignment.Center){
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF5cabe9))
-                }
-                Text("43%")
-            }
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(100.dp)
-            ){
-                Box(modifier = Modifier
-                    .size(50.dp)
-                    .background(color = Color(0xFFf2e1e7)), contentAlignment = Alignment.Center){
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFFd16083))
-                }
-                Text("5%")
-            }
-        }
-
-        Spacer(Modifier.height(32.dp))
-
-        Text("Urni pregled")
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(modifier =
-            Modifier.horizontalScroll(rememberScrollState())
-        ){
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-            Forecast12Card(imgUrl)
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Text("Tedenski pregled")
-
-        Spacer(Modifier.height(8.dp))
-
-        Column(){
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-            Forecast24Card()
-        }
-    }
-}
-
-@Composable
-private fun Forecast24Card() {
-    val textColor = Color(0xFF788A9B)
-    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+    val forecastImgUrl = "${ARSO_WEATHER_IMAGE_URL}${timeline.iconName}.svg"
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        Column {
-            Text("Ponedeljek", fontSize = 14.sp)
-            Text("12.4.2021", fontSize = 12.sp, color = textColor)
+        Column(Modifier.width(100.dp)) {
+            Text(
+                text = date.format(dayNameFormatter).toUpperCase(Locale.ROOT),
+                fontSize = 14.sp
+            )
+            Text(
+                text = date.format(dateFormatter),
+                fontSize = 12.sp,
+                color = MaterialTheme.colors.onSecondary
+            )
         }
 
-        Text(buildAnnotatedString {
-            withStyle(SpanStyle(fontSize = 20.sp)){
-                append("17")
-            }
-            append(" / ")
-            append("15")
-            withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 12.sp)){
-                append(" c")
-            }
-        }, fontSize = 16.sp)
+        Text(
+            text =
+                buildAnnotatedString {
+                    withStyle(SpanStyle(fontSize = 20.sp)){
+                        append(maxTemparature)
+                    }
+                    append(" / ")
+                    append(minTemparature)
+                    withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 12.sp)){
+                        append(" c")
+                    }
+                },
+            fontSize = 16.sp,
+            modifier = Modifier.width(70.dp)
+        )
 
-        Text("Pretežno Oblačno", fontSize = 12.sp, color = textColor)
+        Text(
+            text = description,
+            fontSize = 12.sp,
+            color = MaterialTheme.colors.onSecondary,
+            modifier = Modifier.width(100.dp)
+        )
 
         CoilImage(
-            data = imgUrl,
+            data = forecastImgUrl,
             contentDescription = null,
             error = {
                 Text(it.throwable.message!!)
             },
             modifier = Modifier.size(30.dp)
         )
-
     }
 }
 
-@Composable
-private fun Forecast12Card(imgUrl: String) {
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20f))
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xffa6c7fc),
-                        Color(0xff5c97fd)
-                    )
-                )
-            )
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("11:00", color = Color.White, fontSize = 14.sp)
-
-        CoilImage(
-            data = imgUrl,
-            contentDescription = null,
-            error = {
-                Text(it.throwable.message!!)
-            },
-            modifier = Modifier.size(50.dp)
-        )
-
-        Text("20c", fontWeight = FontWeight.Bold, color = Color.White)
-    }
-
-    Spacer(modifier = Modifier.width(16.dp))
-}
+//
+//@Composable
+//fun SearchPart(vm: WeatherViewModel) {
+//    val scope = rememberCoroutineScope()
+//    var searchInput by remember { mutableStateOf("") }
+//    val locations by vm.arsoLocations.observeAsState()
+//
+//    fun triggerSearch() {
+//        scope.launch() {
+//            vm.triggerSearch(searchInput)
+//        }
+//    }
+//
+//    fun triggerLocationSearch(locationName: String){
+//        scope.launch {
+//            vm.onSearchLocationClicked(locationName)
+//        }
+//    }
+//
+//    Row(Modifier.fillMaxWidth()) {
+//        OutlinedTextField(
+//            value = searchInput,
+//            onValueChange = { searchInput = it; triggerSearch(); },
+//            modifier = Modifier.fillMaxWidth(),
+//            leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null) },
+//            singleLine = true
+//        )
+//
+//        DropdownMenu(
+//            expanded = locations?.size ?: 0 > 0,
+//            onDismissRequest = { },
+//            properties = PopupProperties(focusable = false),
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .height(240.dp)
+//        ) {
+//            locations?.forEach {
+//                val locationTemp: String = it.properties.days.first().timeline.first().t!!
+//                val locationName: String = it.properties.title
+//
+//                DropdownMenuItem(onClick = { triggerLocationSearch(locationName) }) {
+//                    Row() {
+//                        Text(locationTemp, modifier = Modifier.width(20.dp))
+//                        Spacer(Modifier.width(16.dp))
+//                        Text(locationName)
+//                    }
+//                }
+//            }
+//        }
+//    }
+//}
+//
+//@Composable
+//fun DetailsPart(vm: WeatherViewModel){
+//    val locationForecast by vm.selectedLocationWeather.observeAsState()
+//
+//    if(locationForecast != null){
+//        LocationWeatherDetailsPart(locationForecast!!)
+//    }
+//
+//    LocationWeatherDetailsPart(null)
+//
+//}
+//
+//@Composable
+//fun LocationWeatherDetailsPart(locationForecast: ArsoLocationResult?){
+////    val locationName: String = locationForecast.observation.features.first().properties.title
+////    val currentTemp: String = locationForecast.observation.features.first().properties.days.first().timeline.first().t!!
+//
+//    val locationName = "CELJE"
+//    val currentTemp = "12"
+//    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+//
+//    Column(modifier = Modifier){
+//        Text(locationName, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF384555))
+//        Text("Sobota, 10. April, 2021", style = MaterialTheme.typography.subtitle1)
+//
+//        Spacer(Modifier.height(32.dp))
+//
+//        Row(
+//            horizontalArrangement = Arrangement.Center,
+//            verticalAlignment = Alignment.CenterVertically,
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .height(150.dp)
+//        ){
+//
+//            CoilImage(
+//                data = imgUrl,
+//                contentDescription = null,
+//                error = {
+//                    Text(it.throwable.message!!)
+//                },
+//                modifier = Modifier
+//                    .fillMaxHeight()
+//                    .fillMaxWidth(.5f)
+//                    .offset(x = 10.dp),
+//                alignment = Alignment.CenterEnd
+//            )
+//
+//            Column(
+//                modifier = Modifier
+//                    .fillMaxHeight()
+//                    .fillMaxWidth(),
+//                verticalArrangement = Arrangement.Top
+//            ){
+//                Spacer(Modifier.height(16.dp))
+//
+//                Text(text = buildAnnotatedString {
+//                    append(currentTemp)
+//
+//                    withStyle(style = SpanStyle(
+//                        fontSize = 12.sp,
+//                        fontWeight = FontWeight.Light,
+//                        baselineShift = BaselineShift.Superscript,
+//                        color = Color(0xFFadb4bc)
+//                    )){
+//                        append("C")
+//                    }
+//                }, style = MaterialTheme.typography.h1)
+//                Text("Delno Oblačno")
+//            }
+//        }
+//
+//        Spacer(Modifier.height(8.dp))
+//
+//        Row(
+//            horizontalArrangement = Arrangement.SpaceEvenly,
+//            modifier = Modifier.fillMaxWidth()
+//        ){
+//            Column(
+//                horizontalAlignment = Alignment.CenterHorizontally,
+//                modifier = Modifier.width(100.dp)
+//            ){
+//                Box(modifier = Modifier
+//                    .size(50.dp)
+//                    .background(color = Color(0xFFe4f4e7)),
+//                    contentAlignment = Alignment.Center
+//                ){
+//                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF48725f))
+//                }
+//                Text("9km/h")
+//            }
+//
+//            Column(
+//                horizontalAlignment = Alignment.CenterHorizontally,
+//                modifier = Modifier.width(100.dp)
+//            ){
+//                Box(modifier = Modifier
+//                    .size(50.dp)
+//                    .background(color = Color(0xFFe1f0f7)),contentAlignment = Alignment.Center){
+//                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF5cabe9))
+//                }
+//                Text("43%")
+//            }
+//
+//            Column(
+//                horizontalAlignment = Alignment.CenterHorizontally,
+//                modifier = Modifier.width(100.dp)
+//            ){
+//                Box(modifier = Modifier
+//                    .size(50.dp)
+//                    .background(color = Color(0xFFf2e1e7)), contentAlignment = Alignment.Center){
+//                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFFd16083))
+//                }
+//                Text("5%")
+//            }
+//        }
+//
+//        Spacer(Modifier.height(32.dp))
+//
+//        Text("Urni pregled")
+//
+//        Spacer(Modifier.height(8.dp))
+//
+//        Row(modifier =
+//        Modifier.horizontalScroll(rememberScrollState())
+//        ){
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//            Forecast12Card(imgUrl)
+//        }
+//
+//        Spacer(Modifier.height(16.dp))
+//
+//        Text("Tedenski pregled")
+//
+//        Spacer(Modifier.height(8.dp))
+//
+//        Column(){
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//            Forecast24Card()
+//        }
+//    }
+//}
+//
+//@Composable
+//private fun Forecast12Card(imgUrl: String) {
+//    Column(
+//        modifier = Modifier
+//            .clip(RoundedCornerShape(20f))
+//            .background(
+//                brush = Brush.verticalGradient(
+//                    colors = listOf(
+//                        Color(0xffa6c7fc),
+//                        Color(0xff5c97fd)
+//                    )
+//                )
+//            )
+//            .padding(8.dp),
+//        horizontalAlignment = Alignment.CenterHorizontally
+//    ) {
+//        Text("11:00", color = Color.White, fontSize = 14.sp)
+//
+//        CoilImage(
+//            data = imgUrl,
+//            contentDescription = null,
+//            error = {
+//                Text(it.throwable.message!!)
+//            },
+//            modifier = Modifier.size(50.dp)
+//        )
+//
+//        Text("20c", fontWeight = FontWeight.Bold, color = Color.White)
+//    }
+//
+//    Spacer(modifier = Modifier.width(16.dp))
+//}
 
 
 
