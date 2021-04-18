@@ -19,6 +19,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -271,51 +272,62 @@ private fun WeatherAppContent(vm: WeatherViewModel) {
 
             Spacer(Modifier.height(16.dp))
 
-            // header
-            Row(
-
-            ) {
-                CoilImage(
-                    data = imgUrl,
-                    contentDescription = null,
-                    error = {
-                        Text(it.throwable.message!!)
-                    },
-                    modifier = Modifier
-                        .height(150.dp)
-                        .fillMaxWidth(.5f),
-                    contentScale = ContentScale.Crop,
-                    shouldRefetchOnSizeChange = { _, _ -> false }
-
-                )
-
-                Column(
-                    modifier = Modifier,
-                ) {
-                    Text(
-                        buildAnnotatedString {
-                            append("21")
-                            withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 20.sp, fontWeight = FontWeight.Normal)){
-                                append("°C")
-                            }
-                        },
-                        style = MaterialTheme.typography.h1
-                    )
-
-                    Text(
-                        "Pretežno Oblačno",
-                        color = MaterialTheme.colors.onPrimary
-                    )
-                }
-            }
-
+            CurrentForecastMain(imgUrl)
             CurrentForecastDetails()
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
 
             Forecast1h()
 
+            Spacer(Modifier.height(24.dp))
+
             Forecast24h()
+        }
+    }
+}
+
+@Composable
+private fun CurrentForecastMain(imgUrl: String) {
+    Row(
+
+    ) {
+        CoilImage(
+            data = imgUrl,
+            contentDescription = null,
+            error = {
+                Text(it.throwable.message!!)
+            },
+            modifier = Modifier
+                .height(150.dp)
+                .fillMaxWidth(.5f),
+            contentScale = ContentScale.Crop,
+            shouldRefetchOnSizeChange = { _, _ -> false }
+
+        )
+
+        Column(
+            modifier = Modifier,
+        ) {
+            Text(
+                buildAnnotatedString {
+                    append("21")
+                    withStyle(
+                        SpanStyle(
+                            baselineShift = BaselineShift.Superscript,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Normal
+                        )
+                    ) {
+                        append("°C")
+                    }
+                },
+                style = MaterialTheme.typography.h1
+            )
+
+            Text(
+                "Pretežno Oblačno",
+                color = MaterialTheme.colors.onPrimary
+            )
         }
     }
 }
@@ -360,13 +372,13 @@ private fun CurrentForecastDetailItem(detailText: String, detailValue: String, i
 fun Forecast1h(){
     val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
 
-    Text("Danes")
+    Text("Danes", modifier = Modifier.padding(bottom = 8.dp))
 
     Row(modifier =
         Modifier.horizontalScroll(rememberScrollState())
     ){
         Forecast1hCard(imgUrl)
-        Forecast1hCard(imgUrl)
+        Forecast1hCard(imgUrl, true)
         Forecast1hCard(imgUrl)
         Forecast1hCard(imgUrl)
         Forecast1hCard(imgUrl)
@@ -381,22 +393,35 @@ fun Forecast1h(){
 }
 
 @Composable
-fun Forecast1hCard(imgUrl: String){
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20f))
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xffa6c7fc),
-                        Color(0xff5c97fd)
-                    )
+fun Forecast1hCard(imgUrl: String, active: Boolean = false){
+    val roundShape = RoundedCornerShape(10)
+
+    var modifier = Modifier
+        .clip(roundShape)
+        .border(BorderStroke(1.dp, Color(0xFFe8e9ec)), roundShape )
+
+    if(active){
+        modifier = modifier.background(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xffa5c6fd),
+                    Color(0xff5a95fb)
                 )
             )
-            .padding(8.dp),
+        )
+    }
+
+    val textColor = if(active) MaterialTheme.colors.primary else MaterialTheme.colors.onSecondary
+
+    Column(
+        modifier = modifier.padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("11:00", color = Color.White, fontSize = 14.sp)
+        Text("11:00",
+            color = textColor,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Normal
+        )
 
         CoilImage(
             data = imgUrl,
@@ -407,7 +432,15 @@ fun Forecast1hCard(imgUrl: String){
             modifier = Modifier.size(50.dp)
         )
 
-        Text("20c", fontWeight = FontWeight.Bold, color = Color.White)
+        Text(buildAnnotatedString {
+            append("20")
+            withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 10.sp, fontWeight = FontWeight.Normal)){
+                append("c")
+            }
+        }, fontWeight = FontWeight.Bold, color = textColor)
+
+        Text("9 km/h", fontSize = 12.sp, color = textColor)
+        Text("44 %", fontSize = 12.sp, color = textColor)
     }
 
     Spacer(modifier = Modifier.width(16.dp))
@@ -415,6 +448,10 @@ fun Forecast1hCard(imgUrl: String){
 
 @Composable
 fun Forecast24h(){
+    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+
+    Text("Naslednjih 10 dni", modifier = Modifier.padding(bottom = 8.dp))
+
     Column(){
         Forecast24Card()
         Forecast24Card()
@@ -648,17 +685,42 @@ fun LocationWeatherDetailsPart(locationForecast: ArsoLocationResult?){
 
 @Composable
 private fun Forecast24Card() {
+    val textColor = Color(0xFF788A9B)
+    val imgUrl = "${ARSO_WEATHER_IMAGE_URL}prevCloudy_day.svg"
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(8.dp),
+            .padding(vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("MON")
+        Column {
+            Text("Ponedeljek", fontSize = 14.sp)
+            Text("12.4.2021", fontSize = 12.sp, color = textColor)
+        }
 
-        Text("17/15")
+        Text(buildAnnotatedString {
+            withStyle(SpanStyle(fontSize = 20.sp)){
+                append("17")
+            }
+            append(" / ")
+            append("15")
+            withStyle(SpanStyle(baselineShift = BaselineShift.Superscript, fontSize = 12.sp)){
+                append(" c")
+            }
+        }, fontSize = 16.sp)
 
-        Text("Storm")
+        Text("Pretežno Oblačno", fontSize = 12.sp, color = textColor)
+
+        CoilImage(
+            data = imgUrl,
+            contentDescription = null,
+            error = {
+                Text(it.throwable.message!!)
+            },
+            modifier = Modifier.size(30.dp)
+        )
+
     }
 }
 

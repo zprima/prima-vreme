@@ -12,3 +12,5 @@ val Evening = Color(0xFF33283b)
 val Black = Color(0xFF000000)
 val Gray = Color(0xFF777777)
 val Pink = Color(0xFFcb477d)
+
+val White = Color(0xFFFFFFFF)
